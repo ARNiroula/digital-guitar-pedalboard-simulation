@@ -15,9 +15,10 @@ from PyQt6.QtWidgets import (
 )
 
 # import effects
+from ui.pedal import DistortionPedal, DelayPedal
 from audio_signal import AudioIO
+from device_manager import DeviceSelector
 from visualizer import SpectrumAnalyzer
-import ui
 
 
 # PyAudio Value
@@ -35,40 +36,54 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Guitar Pedalboard Simulation")
-        self.resize(1200, 800)
+        self.resize(1200, 900)
 
-        # Audio parameters
+        # These will be set from device selector
         self.sample_rate = 44100
         self.block_len = 1024
 
-        # Spectrum analyzer
+        self._setup_ui()
+
+        # Initialize analyzer after UI (so we can get settings)
+        self._init_analyzer()
+
+        self.threadpool = QThreadPool()
+        self.audio_worker = None
+
+        self.plot_timer = QTimer()
+        self.plot_timer.timeout.connect(self._update_plots)
+        self.plot_timer.start(16)
+
+    def _init_analyzer(self):
+        """Initialize or reinitialize the spectrum analyzer"""
+        self.sample_rate = self.device_selector.get_sample_rate()
+        self.block_len = self.device_selector.get_buffer_size()
+
         self.analyzer = SpectrumAnalyzer(self.sample_rate, self.block_len)
 
-        # Audio data buffers
         self.input_spectrum = np.zeros(len(self.analyzer.freqs))
         self.output_spectrum = np.zeros(len(self.analyzer.freqs))
         self.smoothing = 0.7
 
-        # Create pedals
-        self.distortion = ui.pedal.DistortionPedal()
-        self.delay = ui.pedal.DelayPedal(self.sample_rate)
+        self.latest_input = np.zeros(self.block_len)
+        self.latest_output = np.zeros(self.block_len)
 
-        self._setup_ui()
-
-        # Audio setup
-        self.threadpool = QThreadPool()
-        self.audio_worker = None
-
-        # Update timer
-        self.plot_timer = QTimer()
-        self.plot_timer.timeout.connect(self._update_plots)
-        self.plot_timer.start(16)
+        # Update delay pedal sample rate
+        self.delay.sample_rate = self.sample_rate
+        self.delay.max_delay_samples = self.sample_rate
+        self.delay.buffer = np.zeros(self.sample_rate)
+        self.delay.write_idx = 0
 
     def _setup_ui(self):
         central = QWidget()
         main_layout = QVBoxLayout(central)
 
         pg.setConfigOptions(antialias=True)
+
+        # Device selector at the top
+        self.device_selector = DeviceSelector()
+        self.device_selector.device_changed.connect(self._on_settings_changed)
+        main_layout.addWidget(self.device_selector)
 
         # Spectrum plots
         spectrum_layout = QHBoxLayout()
@@ -78,7 +93,7 @@ class MainWindow(QMainWindow):
         self.input_plot.setLabel("bottom", "Frequency", units="Hz")
         self.input_plot.setYRange(-80, 0)
         self.input_plot.setXRange(20, 20000)
-        self.input_plot.setLogMode(x=True, y=False)
+        self.input_plot.setLogMode(x=False, y=False)
         self.input_curve = self.input_plot.plot(pen=pg.mkPen("cyan", width=1))
         spectrum_layout.addWidget(self.input_plot)
 
@@ -87,7 +102,7 @@ class MainWindow(QMainWindow):
         self.output_plot.setLabel("bottom", "Frequency", units="Hz")
         self.output_plot.setYRange(-80, 0)
         self.output_plot.setXRange(20, 20000)
-        self.output_plot.setLogMode(x=True, y=False)
+        self.output_plot.setLogMode(x=False, y=False)
         self.output_curve = self.output_plot.plot(pen=pg.mkPen("lime", width=1))
         spectrum_layout.addWidget(self.output_plot)
 
@@ -107,6 +122,10 @@ class MainWindow(QMainWindow):
         )
         main_layout.addWidget(self.waveform_plot)
 
+        # Create pedals
+        self.distortion = DistortionPedal()
+        self.delay = DelayPedal(self.device_selector.get_sample_rate())
+
         # Pedalboard section
         pedal_frame = QFrame()
         pedal_frame.setStyleSheet("""
@@ -120,7 +139,6 @@ class MainWindow(QMainWindow):
         pedal_layout = QHBoxLayout(pedal_frame)
         pedal_layout.setSpacing(20)
 
-        # Add pedals
         pedal_layout.addWidget(self.distortion)
         pedal_layout.addWidget(self.delay)
         pedal_layout.addStretch()
@@ -157,19 +175,35 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(button_layout)
         self.setCentralWidget(central)
 
-        # Store latest audio data
-        self.latest_input = np.zeros(self.block_len)
-        self.latest_output = np.zeros(self.block_len)
+    def _on_settings_changed(self):
+        """Handle device or settings changes"""
+        was_running = self.audio_worker is not None
+
+        # Stop audio if running
+        if was_running:
+            self.toggle_audio(False)
+            self.start_btn.setChecked(False)
+
+        # Reinitialize analyzer with new settings
+        self._init_analyzer()
 
     def toggle_audio(self, checked):
         if checked:
             self.start_btn.setText("Stop Audio")
+
+            # Get all settings from device selector
+            input_device = self.device_selector.get_input_device_index()
+            output_device = self.device_selector.get_output_device_index()
+            sample_rate = self.device_selector.get_sample_rate()
+            buffer_size = self.device_selector.get_buffer_size()
+
             self.audio_worker = AudioIO(
-                block_len=self.block_len,
+                block_len=buffer_size,
                 channels=1,
-                rate=self.sample_rate,
+                rate=sample_rate,
+                input_device_index=input_device,
+                output_device_index=output_device,
             )
-            # Add pedals to effects chain
             self.audio_worker.effects = [self.distortion, self.delay]
 
             self.audio_worker.signals.audio_data.connect(self._on_audio_data)
@@ -212,6 +246,7 @@ class MainWindow(QMainWindow):
         if self.audio_worker:
             self.audio_worker.stop()
         self.threadpool.waitForDone(1000)
+        self.device_selector.device_manager.terminate()
         event.accept()
 
 
