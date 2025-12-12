@@ -1,81 +1,204 @@
 import sys
 
+import numpy as np
 import pyaudio
-from PyQt6.QtCore import QSize, QThreadPool
-from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton
+import pyqtgraph as pg
+from PyQt6.QtCore import QThreadPool, QTimer
+from PyQt6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QPushButton,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+)
 
+import effects
 from audio_signal import AudioIO
+from visualizer import SpectrumAnalyzer
+
 
 # PyAudio Value
 # TODO: make the below constant value changable using the GUI input
 BLOCKLEN = 64  # Number of frames per block
 WIDTH = 2  # Bytes per sample
 CHANNELS = 1  # Mono
-RATE = 8000  # Frames per second
+RATE = 44100  # Frames per second
 
 p = pyaudio.PyAudio()
 PA_FORMAT = pyaudio.paInt16
-# stream = p.open(
-#     format=PA_FORMAT,
-#     channels=CHANNELS,
-#     rate=RATE,
-#     input=False,
-#     output=True,
-#     frames_per_buffer=BLOCKLEN,
-# )
-# specify low frames_per_buffer to reduce latency
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Guitar Pedalboard Simulation")
+        self.resize(1200, 700)
 
-        # TODO: Add device
+        # Audio parameters
+        self.sample_rate = 44100
+        self.block_len = 1024
 
-        # Input Specification
-        self.block_len = BLOCKLEN
-        self.width = WIDTH
-        self.channels = CHANNELS
-        self.rate = RATE
-        self.pa_format = PA_FORMAT
+        # Spectrum analyzer
+        self.analyzer = SpectrumAnalyzer(self.sample_rate, self.block_len)
 
-        # Buttons
-        button = QPushButton("Press Me!")
-        button.setCheckable(True)
-        button.clicked.connect(self.audio_record)
-        button.clicked.connect(self.test_func)
+        # Audio data buffers (for smoothing visualization)
+        self.input_spectrum = np.zeros(len(self.analyzer.freqs))
+        self.output_spectrum = np.zeros(len(self.analyzer.freqs))
+        self.smoothing = 0.7  # Higher = smoother but slower response
 
-        # IO ThreadPool
+        self._setup_ui()
+
+        # Audio setup
         self.threadpool = QThreadPool()
+        self.audio_worker = None
 
-        # Start the audio IO
-        self.audio_io_worker = AudioIO(
-            p=p,
-            block_len=self.block_len,
-            width=self.width,
-            channels=self.channels,
-            rate=self.rate,
-            pa_format=self.pa_format,
+        # Update timer for plots (60 FPS)
+        self.plot_timer = QTimer()
+        self.plot_timer.timeout.connect(self._update_plots)
+        self.plot_timer.start(16)  # ~60 FPS
+
+    def _setup_ui(self):
+        central = QWidget()
+        main_layout = QVBoxLayout(central)
+
+        # Configure pyqtgraph
+        pg.setConfigOptions(antialias=True)
+
+        # Spectrum plots container
+        spectrum_layout = QHBoxLayout()
+
+        # Input spectrum plot
+        self.input_plot = pg.PlotWidget(title="Input Spectrum")
+        self.input_plot.setLabel("left", "Magnitude", units="dB")
+        self.input_plot.setLabel("bottom", "Frequency", units="Hz")
+        self.input_plot.setYRange(-80, 0)
+        self.input_plot.setXRange(20, 20000)
+        self.input_plot.setLogMode(x=True, y=False)  # Log frequency scale
+        self.input_curve = self.input_plot.plot(pen=pg.mkPen("cyan", width=1))
+        spectrum_layout.addWidget(self.input_plot)
+
+        # Output spectrum plot
+        self.output_plot = pg.PlotWidget(title="Output Spectrum")
+        self.output_plot.setLabel("left", "Magnitude", units="dB")
+        self.output_plot.setLabel("bottom", "Frequency", units="Hz")
+        self.output_plot.setYRange(-80, 0)
+        self.output_plot.setXRange(20, 20000)
+        self.output_plot.setLogMode(x=True, y=False)
+        self.output_curve = self.output_plot.plot(pen=pg.mkPen("lime", width=1))
+        spectrum_layout.addWidget(self.output_plot)
+
+        main_layout.addLayout(spectrum_layout)
+
+        # Waveform plot (shows both input and output)
+        self.waveform_plot = pg.PlotWidget(title="Waveform")
+        self.waveform_plot.setLabel("left", "Amplitude")
+        self.waveform_plot.setLabel("bottom", "Samples")
+        self.waveform_plot.setYRange(-1, 1)
+        self.waveform_plot.addLegend()
+        self.input_wave_curve = self.waveform_plot.plot(
+            pen=pg.mkPen("cyan", width=1), name="Input"
         )
-        self.threadpool.start(self.audio_io_worker)
+        self.output_wave_curve = self.waveform_plot.plot(
+            pen=pg.mkPen("lime", width=1), name="Output"
+        )
+        main_layout.addWidget(self.waveform_plot)
 
-        self.setFixedSize(QSize(680, 480))
+        # Control buttons
+        button_layout = QHBoxLayout()
 
-        self.setCentralWidget(button)
+        self.start_btn = QPushButton("Start Audio")
+        self.start_btn.setCheckable(True)
+        self.start_btn.clicked.connect(self.toggle_audio)
+        self.start_btn.setStyleSheet("""
+            QPushButton {
+                padding: 10px 20px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QPushButton:checked {
+                background-color: #4CAF50;
+                color: white;
+            }
+        """)
+        button_layout.addWidget(self.start_btn)
 
-    def audio_record(self):
-        print("You Clicked Me!!")
+        button_layout.addStretch()
+        main_layout.addLayout(button_layout)
 
-    def test_func(self, checked):
-        print(f"You've already clicked me!! {checked}")
+        self.setCentralWidget(central)
+
+        # Store latest audio data
+        self.latest_input = np.zeros(self.block_len)
+        self.latest_output = np.zeros(self.block_len)
+
+    def toggle_audio(self, checked):
+        if checked:
+            self.start_btn.setText("Stop Audio")
+            self.audio_worker = AudioIO(
+                block_len=self.block_len,
+                channels=1,
+                rate=self.sample_rate,
+            )
+            self.audio_worker.signals.audio_data.connect(self._on_audio_data)
+            self.audio_worker.signals.error.connect(self._on_audio_error)
+            # self.audio_worker.effects.append(simple_distortion)
+            self.threadpool.start(self.audio_worker)
+        else:
+            self.start_btn.setText("Start Audio")
+            if self.audio_worker:
+                self.audio_worker.stop()
+                self.audio_worker = None
+
+    def _on_audio_data(self, audio_in: np.ndarray, audio_out: np.ndarray):
+        """Called from audio thread with new data"""
+        self.latest_input = audio_in
+        self.latest_output = audio_out
+
+        # Compute spectrums
+        _, in_spectrum = self.analyzer.compute(audio_in)
+        _, out_spectrum = self.analyzer.compute(audio_out)
+
+        # Apply smoothing (exponential moving average)
+        self.input_spectrum = (
+            self.smoothing * self.input_spectrum + (1 - self.smoothing) * in_spectrum
+        )
+        self.output_spectrum = (
+            self.smoothing * self.output_spectrum + (1 - self.smoothing) * out_spectrum
+        )
+
+    def _on_audio_error(self, error_msg: str):
+        print(f"Audio error: {error_msg}")
+        self.start_btn.setChecked(False)
+        self.start_btn.setText("Start Audio")
+
+    def _update_plots(self):
+        """Update plot visuals (called by timer)"""
+        freqs = self.analyzer.freqs
+
+        # Update spectrum plots (skip DC component at index 0)
+        self.input_curve.setData(freqs[1:], self.input_spectrum[1:])
+        self.output_curve.setData(freqs[1:], self.output_spectrum[1:])
+
+        # Update waveform plots
+        self.input_wave_curve.setData(self.latest_input)
+        self.output_wave_curve.setData(self.latest_output)
+
+    def closeEvent(self, event):
+        self.plot_timer.stop()
+        if self.audio_worker:
+            self.audio_worker.stop()
+        self.threadpool.waitForDone(1000)
+        event.accept()
 
 
-print("Starting Core Application")
-app = QApplication(sys.argv)
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
 
-window = MainWindow()
-window.show()
+    # Dark theme for pyqtgraph
+    pg.setConfigOption("background", "#2b2b2b")
+    pg.setConfigOption("foreground", "#ffffff")
 
-app.exec()
-print("Closing Application. GoodBye!!")
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
