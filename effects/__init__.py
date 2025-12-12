@@ -1,4 +1,12 @@
-from . import distortion, amplitude_modulation, delay, flanger, overdrive, phaser
+from . import (
+    distortion,
+    amplitude_modulation,
+    delay,
+    flanger,
+    overdrive,
+    phaser,
+    vibrato,
+)
 
 __all__ = [
     "distortion",
@@ -7,4 +15,5 @@ __all__ = [
     "flanger",
     "overdrive",
     "phaser",
+    "vibrato",
 ]

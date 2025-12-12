@@ -11,11 +11,13 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QFrame,
 )
 
-import effects
+# import effects
 from audio_signal import AudioIO
 from visualizer import SpectrumAnalyzer
+import ui
 
 
 # PyAudio Value
@@ -33,7 +35,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Guitar Pedalboard Simulation")
-        self.resize(1200, 700)
+        self.resize(1200, 800)
 
         # Audio parameters
         self.sample_rate = 44100
@@ -42,10 +44,14 @@ class MainWindow(QMainWindow):
         # Spectrum analyzer
         self.analyzer = SpectrumAnalyzer(self.sample_rate, self.block_len)
 
-        # Audio data buffers (for smoothing visualization)
+        # Audio data buffers
         self.input_spectrum = np.zeros(len(self.analyzer.freqs))
         self.output_spectrum = np.zeros(len(self.analyzer.freqs))
-        self.smoothing = 0.7  # Higher = smoother but slower response
+        self.smoothing = 0.7
+
+        # Create pedals
+        self.distortion = ui.pedal.DistortionPedal()
+        self.delay = ui.pedal.DelayPedal(self.sample_rate)
 
         self._setup_ui()
 
@@ -53,32 +59,29 @@ class MainWindow(QMainWindow):
         self.threadpool = QThreadPool()
         self.audio_worker = None
 
-        # Update timer for plots (60 FPS)
+        # Update timer
         self.plot_timer = QTimer()
         self.plot_timer.timeout.connect(self._update_plots)
-        self.plot_timer.start(16)  # ~60 FPS
+        self.plot_timer.start(16)
 
     def _setup_ui(self):
         central = QWidget()
         main_layout = QVBoxLayout(central)
 
-        # Configure pyqtgraph
         pg.setConfigOptions(antialias=True)
 
-        # Spectrum plots container
+        # Spectrum plots
         spectrum_layout = QHBoxLayout()
 
-        # Input spectrum plot
         self.input_plot = pg.PlotWidget(title="Input Spectrum")
         self.input_plot.setLabel("left", "Magnitude", units="dB")
         self.input_plot.setLabel("bottom", "Frequency", units="Hz")
         self.input_plot.setYRange(-80, 0)
         self.input_plot.setXRange(20, 20000)
-        self.input_plot.setLogMode(x=True, y=False)  # Log frequency scale
+        self.input_plot.setLogMode(x=True, y=False)
         self.input_curve = self.input_plot.plot(pen=pg.mkPen("cyan", width=1))
         spectrum_layout.addWidget(self.input_plot)
 
-        # Output spectrum plot
         self.output_plot = pg.PlotWidget(title="Output Spectrum")
         self.output_plot.setLabel("left", "Magnitude", units="dB")
         self.output_plot.setLabel("bottom", "Frequency", units="Hz")
@@ -90,7 +93,7 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(spectrum_layout)
 
-        # Waveform plot (shows both input and output)
+        # Waveform plot
         self.waveform_plot = pg.PlotWidget(title="Waveform")
         self.waveform_plot.setLabel("left", "Amplitude")
         self.waveform_plot.setLabel("bottom", "Samples")
@@ -104,6 +107,26 @@ class MainWindow(QMainWindow):
         )
         main_layout.addWidget(self.waveform_plot)
 
+        # Pedalboard section
+        pedal_frame = QFrame()
+        pedal_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1a1a1a;
+                border: 2px solid #333333;
+                border-radius: 10px;
+                padding: 10px;
+            }
+        """)
+        pedal_layout = QHBoxLayout(pedal_frame)
+        pedal_layout.setSpacing(20)
+
+        # Add pedals
+        pedal_layout.addWidget(self.distortion)
+        pedal_layout.addWidget(self.delay)
+        pedal_layout.addStretch()
+
+        main_layout.addWidget(pedal_frame)
+
         # Control buttons
         button_layout = QHBoxLayout()
 
@@ -112,20 +135,26 @@ class MainWindow(QMainWindow):
         self.start_btn.clicked.connect(self.toggle_audio)
         self.start_btn.setStyleSheet("""
             QPushButton {
-                padding: 10px 20px;
-                font-size: 14px;
+                padding: 15px 30px;
+                font-size: 16px;
                 font-weight: bold;
+                background-color: #333333;
+                color: white;
+                border: 2px solid #555555;
+                border-radius: 5px;
             }
             QPushButton:checked {
                 background-color: #4CAF50;
-                color: white;
+                border-color: #4CAF50;
+            }
+            QPushButton:hover {
+                background-color: #444444;
             }
         """)
         button_layout.addWidget(self.start_btn)
-
         button_layout.addStretch()
-        main_layout.addLayout(button_layout)
 
+        main_layout.addLayout(button_layout)
         self.setCentralWidget(central)
 
         # Store latest audio data
@@ -140,9 +169,11 @@ class MainWindow(QMainWindow):
                 channels=1,
                 rate=self.sample_rate,
             )
+            # Add pedals to effects chain
+            self.audio_worker.effects = [self.distortion, self.delay]
+
             self.audio_worker.signals.audio_data.connect(self._on_audio_data)
             self.audio_worker.signals.error.connect(self._on_audio_error)
-            # self.audio_worker.effects.append(simple_distortion)
             self.threadpool.start(self.audio_worker)
         else:
             self.start_btn.setText("Start Audio")
@@ -151,15 +182,12 @@ class MainWindow(QMainWindow):
                 self.audio_worker = None
 
     def _on_audio_data(self, audio_in: np.ndarray, audio_out: np.ndarray):
-        """Called from audio thread with new data"""
         self.latest_input = audio_in
         self.latest_output = audio_out
 
-        # Compute spectrums
         _, in_spectrum = self.analyzer.compute(audio_in)
         _, out_spectrum = self.analyzer.compute(audio_out)
 
-        # Apply smoothing (exponential moving average)
         self.input_spectrum = (
             self.smoothing * self.input_spectrum + (1 - self.smoothing) * in_spectrum
         )
@@ -173,14 +201,9 @@ class MainWindow(QMainWindow):
         self.start_btn.setText("Start Audio")
 
     def _update_plots(self):
-        """Update plot visuals (called by timer)"""
         freqs = self.analyzer.freqs
-
-        # Update spectrum plots (skip DC component at index 0)
         self.input_curve.setData(freqs[1:], self.input_spectrum[1:])
         self.output_curve.setData(freqs[1:], self.output_spectrum[1:])
-
-        # Update waveform plots
         self.input_wave_curve.setData(self.latest_input)
         self.output_wave_curve.setData(self.latest_output)
 

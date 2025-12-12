@@ -26,10 +26,7 @@ class AudioIO(QRunnable):
         self.pa_format = pa_format
         self.is_running = True
         self.signals = AudioSignals()
-
-        # Effects chain (list of callables)
         self.effects = []
-
         self._stream = None
         self._p = None
 
@@ -51,22 +48,21 @@ class AudioIO(QRunnable):
                     self.block_len, exception_on_overflow=False
                 )
                 audio_in = np.frombuffer(input_bytes, dtype=np.int16).astype(np.float32)
-
-                # Normalize to -1.0 to 1.0
                 audio_in = audio_in / 32768.0
 
-                # Store input for visualization
                 input_copy = audio_in.copy()
-
-                # Apply effects chain
                 audio_out = audio_in.copy()
-                for effect in self.effects:
-                    audio_out = effect(audio_out)
 
-                # Emit both input and output for visualization
+                # Process through effects chain
+                for effect in self.effects:
+                    # Support both callable functions and Pedal objects
+                    if callable(effect):
+                        audio_out = effect(audio_out)
+                    elif hasattr(effect, "process"):
+                        audio_out = effect.process(audio_out)
+
                 self.signals.audio_data.emit(input_copy, audio_out.copy())
 
-                # Convert back to int16 and output
                 output = np.clip(audio_out * 32768.0, -32768, 32767).astype(np.int16)
                 self._stream.write(output.tobytes())
 
