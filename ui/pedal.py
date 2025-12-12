@@ -21,7 +21,7 @@ class Pedal(QFrame):
                 border-radius: 10px;
             }}
         """)
-        self.setMinimumSize(150, 200)
+        self.setMinimumSize(300, 350)
 
         self._setup_ui()
 
