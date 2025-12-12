@@ -1,7 +1,14 @@
 import numpy as np
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import pyqtSignal, Qt, QRectF
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QConicalGradient
+from PyQt6.QtGui import (
+    QPainter,
+    QPen,
+    QBrush,
+    QColor,
+    QFont,
+    QConicalGradient,
+)
 
 
 class Knob(QWidget):
