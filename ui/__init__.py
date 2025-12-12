@@ -1,1 +1,2 @@
-from . import knob, pedal
+from . import knob, pedal, meter, tabs
+
