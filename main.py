@@ -3,7 +3,7 @@ import sys
 import numpy as np
 import pyaudio
 import pyqtgraph as pg
-from PyQt6.QtCore import QThreadPool, QTimer
+from PyQt6.QtCore import QThreadPool, QTimer, Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 from ui.tabs import MainTab, SettingsTab, SpectrumTab, PedalboardTab
 from audio_signal import AudioIO
 from visualizer import SpectrumAnalyzer
+from io_manager.synthetic_input import KarplusStrongSynth
 
 
 # PyAudio Value
@@ -37,10 +38,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Guitar Pedalboard Simulator")
-        self.resize(1000, 700)
+        self.resize(1000, 750)
 
         self.sample_rate = 44100
         self.block_len = 1024
+
+        # Karplus-Strong Synthesizer
+        self.synth = KarplusStrongSynth(self.sample_rate)
 
         # Initialize arrays
         self.analyzer = None
@@ -62,6 +66,25 @@ class MainWindow(QMainWindow):
         self.plot_timer = QTimer()
         self.plot_timer.timeout.connect(self._update_plots)
         self.plot_timer.start(16)
+
+        # Keyboard mapping for playing notes
+        self.key_note_map = {
+            Qt.Key.Key_A: "E2",
+            Qt.Key.Key_S: "A2",
+            Qt.Key.Key_D: "D3",
+            Qt.Key.Key_F: "G3",
+            Qt.Key.Key_G: "B3",
+            Qt.Key.Key_H: "E4",
+            Qt.Key.Key_J: "A3",
+            Qt.Key.Key_K: "C4",
+            Qt.Key.Key_Z: "C3",
+            Qt.Key.Key_X: "D3",
+            Qt.Key.Key_C: "E3",
+            Qt.Key.Key_V: "F3",
+            Qt.Key.Key_B: "G3",
+            Qt.Key.Key_N: "A3",
+            Qt.Key.Key_M: "B3",
+        }
 
     def _setup_ui(self):
         central = QWidget()
@@ -105,6 +128,10 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab()
 
         self.settings_tab.device_changed.connect(self._on_settings_changed)
+        self.main_tab.note_triggered.connect(self._on_note_triggered)
+        self.main_tab.damping_slider.valueChanged.connect(
+            lambda v: self.synth.set_damping(v / 1000.0)
+        )
 
         # self.tabs.addTab(self.main_tab, "🎸 Main")
         # self.tabs.addTab(self.spectrum_tab, "📊 Spectrum")
@@ -154,14 +181,19 @@ class MainWindow(QMainWindow):
         """)
         control_layout.addWidget(self.start_btn)
 
-        # Status label
         self.status_label = QLabel("Ready")
         self.status_label.setStyleSheet("color: #888888; font-size: 13px;")
         control_layout.addWidget(self.status_label)
 
         control_layout.addStretch()
 
-        # Quick info
+        # Input source indicator
+        self.source_label = QLabel("Source: Synth")
+        self.source_label.setStyleSheet("color: #00bfff; font-size: 12px;")
+        control_layout.addWidget(self.source_label)
+
+        control_layout.addSpacing(15)
+
         self.info_label = QLabel("44100 Hz | 1024 samples")
         self.info_label.setStyleSheet("color: #00ff88; font-size: 12px;")
         control_layout.addWidget(self.info_label)
@@ -185,11 +217,16 @@ class MainWindow(QMainWindow):
         self.latest_input = np.zeros(self.block_len)
         self.latest_output = np.zeros(self.block_len)
 
-        # Update pedalboard sample rate
+        # Update synth and pedalboard
+        self.synth.set_sample_rate(self.sample_rate)
         self.pedalboard_tab.update_sample_rate(self.sample_rate)
 
-        # Update info label
         self.info_label.setText(f"{self.sample_rate} Hz | {self.block_len} samples")
+
+        # Update source label
+        source = "Synth" if self.settings_tab.use_synth() else "Mic"
+        output = "Output ON" if self.settings_tab.output_enabled() else "Output OFF"
+        self.source_label.setText(f"Source: {source} | {output}")
 
     def _on_settings_changed(self):
         was_running = self.audio_worker is not None
@@ -200,11 +237,18 @@ class MainWindow(QMainWindow):
 
         self._init_analyzer()
 
+    def _on_note_triggered(self, note: str):
+        """Handle note trigger from virtual keyboard"""
+        self.synth.pluck_note(note, 0.8)
+
     def toggle_audio(self, checked):
         if checked:
             self.start_btn.setText("■ Stop Audio")
             self.status_label.setText("Running...")
             self.status_label.setStyleSheet("color: #00ff88; font-size: 13px;")
+
+            use_synth = self.settings_tab.use_synth()
+            enable_output = self.settings_tab.output_enabled()
 
             input_device = self.settings_tab.get_input_device_index()
             output_device = self.settings_tab.get_output_device_index()
@@ -217,6 +261,9 @@ class MainWindow(QMainWindow):
                 rate=sample_rate,
                 input_device_index=input_device,
                 output_device_index=output_device,
+                use_synth=use_synth,
+                synth=self.synth,
+                enable_output=enable_output,
             )
 
             self.audio_worker.effects = self.pedalboard_tab.get_effects_chain()
@@ -236,7 +283,6 @@ class MainWindow(QMainWindow):
         self.latest_input = audio_in
         self.latest_output = audio_out
 
-        # Update VU meters
         self.main_tab.input_meter.set_level(np.max(np.abs(audio_in)))
         self.main_tab.output_meter.set_level(np.max(np.abs(audio_out)))
 
@@ -286,18 +332,27 @@ class MainWindow(QMainWindow):
             if len(freqs) <= 1:
                 return
 
-            # Update spectrum tab
             self.spectrum_tab.input_curve.setData(freqs[1:], self.input_spectrum[1:])
             self.spectrum_tab.input_peak_curve.setData(freqs[1:], self.input_peak[1:])
             self.spectrum_tab.output_curve.setData(freqs[1:], self.output_spectrum[1:])
             self.spectrum_tab.output_peak_curve.setData(freqs[1:], self.output_peak[1:])
 
-            # Update waveform in main tab
             self.main_tab.input_wave_curve.setData(self.latest_input)
             self.main_tab.output_wave_curve.setData(self.latest_output)
 
         except (TypeError, IndexError, ValueError):
             pass
+
+    def keyPressEvent(self, event):
+        """Handle keyboard input for playing notes"""
+        if event.isAutoRepeat():
+            return
+
+        key = event.key()
+        if key in self.key_note_map:
+            self.synth.pluck_note(self.key_note_map[key], 0.8)
+        else:
+            super().keyPressEvent(event)
 
     def closeEvent(self, event):
         self.plot_timer.stop()
