@@ -10,8 +10,6 @@ from PyQt6.QtWidgets import (
 
 
 class AudioDeviceManager:
-    """Manages audio device enumeration and selection"""
-
     def __init__(self):
         self._p = pyaudio.PyAudio()
 
@@ -22,7 +20,6 @@ class AudioDeviceManager:
         return self._p.get_device_info_by_index(index)
 
     def get_input_devices(self) -> list[tuple[int, str]]:
-        """Returns list of (index, name) for input devices"""
         devices = []
         for i in range(self.get_device_count()):
             info = self.get_device_info(i)
@@ -32,7 +29,6 @@ class AudioDeviceManager:
         return devices
 
     def get_output_devices(self) -> list[tuple[int, str]]:
-        """Returns list of (index, name) for output devices"""
         devices = []
         for i in range(self.get_device_count()):
             info = self.get_device_info(i)
