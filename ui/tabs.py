@@ -10,10 +10,13 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QGroupBox,
     QScrollArea,
+    QCheckBox,
+    QSlider,
 )
 import pyqtgraph as pg
 
 from io_manager import AudioDeviceManager
+from .keyboard import VirtualKeyboard
 from .meter import VUMeter
 from .pedal import (
     CompressorPedal,
@@ -34,12 +37,13 @@ class SettingsTab(QWidget):
         super().__init__(parent)
         self.device_manager = AudioDeviceManager()
 
-        # Initialize attributes first
         self.input_combo = None
         self.output_combo = None
         self.sample_rate_combo = None
         self.buffer_combo = None
         self.latency_label = None
+        self.input_source_combo = None
+        self.output_enabled_checkbox = None
 
         self._setup_ui()
         self._populate_devices()
@@ -101,6 +105,50 @@ class SettingsTab(QWidget):
             }
         """
 
+        # Input Source Group
+        source_group = QGroupBox("Input Source")
+        source_group.setStyleSheet(group_style)
+        source_layout = QGridLayout(source_group)
+        source_layout.setSpacing(15)
+        source_layout.setContentsMargins(20, 30, 20, 20)
+
+        source_label = QLabel("Source:")
+        source_label.setStyleSheet(label_style)
+        source_layout.addWidget(source_label, 0, 0)
+
+        self.input_source_combo = QComboBox()
+        self.input_source_combo.setStyleSheet(combo_style)
+        self.input_source_combo.addItem("🎸 Karplus-Strong Synthesizer", "synth")
+        self.input_source_combo.addItem("🎤 Microphone Input", "mic")
+        source_layout.addWidget(self.input_source_combo, 0, 1)
+
+        # Output enable checkbox
+        self.output_enabled_checkbox = QCheckBox("Enable Audio Output (to speakers)")
+        self.output_enabled_checkbox.setChecked(True)
+        self.output_enabled_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: white;
+                font-size: 13px;
+            }
+            QCheckBox::indicator {
+                width: 20px;
+                height: 20px;
+            }
+            QCheckBox::indicator:unchecked {
+                background-color: #3a3a3a;
+                border: 2px solid #555555;
+                border-radius: 4px;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #00ff88;
+                border: 2px solid #00ff88;
+                border-radius: 4px;
+            }
+        """)
+        source_layout.addWidget(self.output_enabled_checkbox, 1, 0, 1, 2)
+
+        layout.addWidget(source_group)
+
         # Audio Devices Group
         devices_group = QGroupBox("Audio Devices")
         devices_group.setStyleSheet(group_style)
@@ -108,7 +156,6 @@ class SettingsTab(QWidget):
         devices_layout.setSpacing(15)
         devices_layout.setContentsMargins(20, 30, 20, 20)
 
-        # Input device
         input_label = QLabel("Input Device:")
         input_label.setStyleSheet(label_style)
         devices_layout.addWidget(input_label, 0, 0)
@@ -117,7 +164,6 @@ class SettingsTab(QWidget):
         self.input_combo.setStyleSheet(combo_style)
         devices_layout.addWidget(self.input_combo, 0, 1)
 
-        # Output device
         output_label = QLabel("Output Device:")
         output_label.setStyleSheet(label_style)
         devices_layout.addWidget(output_label, 1, 0)
@@ -126,7 +172,6 @@ class SettingsTab(QWidget):
         self.output_combo.setStyleSheet(combo_style)
         devices_layout.addWidget(self.output_combo, 1, 1)
 
-        # Refresh button
         refresh_btn = QPushButton("Refresh Devices")
         refresh_btn.clicked.connect(self._populate_devices)
         refresh_btn.setStyleSheet("""
@@ -154,7 +199,6 @@ class SettingsTab(QWidget):
         settings_layout.setSpacing(15)
         settings_layout.setContentsMargins(20, 30, 20, 20)
 
-        # Sample rate
         sample_rate_label = QLabel("Sample Rate:")
         sample_rate_label.setStyleSheet(label_style)
         settings_layout.addWidget(sample_rate_label, 0, 0)
@@ -171,7 +215,6 @@ class SettingsTab(QWidget):
         self.sample_rate_combo.setCurrentIndex(1)
         settings_layout.addWidget(self.sample_rate_combo, 0, 1)
 
-        # Buffer size
         buffer_label = QLabel("Buffer Size:")
         buffer_label.setStyleSheet(label_style)
         settings_layout.addWidget(buffer_label, 1, 0)
@@ -189,7 +232,6 @@ class SettingsTab(QWidget):
         self.buffer_combo.setCurrentIndex(3)
         settings_layout.addWidget(self.buffer_combo, 1, 1)
 
-        # Latency display
         self.latency_label = QLabel("Estimated Latency: ~23ms")
         self.latency_label.setStyleSheet("color: #888888; font-size: 13px;")
         settings_layout.addWidget(self.latency_label, 2, 0, 1, 2)
@@ -202,6 +244,8 @@ class SettingsTab(QWidget):
         self.output_combo.currentIndexChanged.connect(self._on_device_changed)
         self.sample_rate_combo.currentIndexChanged.connect(self._on_device_changed)
         self.buffer_combo.currentIndexChanged.connect(self._on_device_changed)
+        self.input_source_combo.currentIndexChanged.connect(self._on_device_changed)
+        self.output_enabled_checkbox.stateChanged.connect(self._on_device_changed)
 
     def _populate_devices(self):
         current_input = self.get_input_device_index()
@@ -251,7 +295,6 @@ class SettingsTab(QWidget):
         self.device_changed.emit()
 
     def _update_latency_display(self):
-        # Guard against being called before widgets exist
         if (
             self.buffer_combo is None
             or self.sample_rate_combo is None
@@ -285,9 +328,21 @@ class SettingsTab(QWidget):
             return 1024
         return self.buffer_combo.currentData()
 
+    def use_synth(self) -> bool:
+        if self.input_source_combo is None:
+            return True
+        return self.input_source_combo.currentData() == "synth"
+
+    def output_enabled(self) -> bool:
+        if self.output_enabled_checkbox is None:
+            return True
+        return self.output_enabled_checkbox.isChecked()
+
 
 class MainTab(QWidget):
-    """Main tab with VU meters, waveform, and controls"""
+    """Main tab with VU meters, waveform, and synth controls"""
+
+    note_triggered = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -297,9 +352,7 @@ class MainTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
-        # VU Meters section
-        meters_group = QGroupBox("Levels")
-        meters_group.setStyleSheet("""
+        group_style = """
             QGroupBox {
                 color: #00ff88;
                 font-size: 14px;
@@ -314,7 +367,65 @@ class MainTab(QWidget):
                 left: 15px;
                 padding: 0 10px;
             }
+        """
+
+        # Synth / Keyboard section
+        synth_group = QGroupBox("🎸 Virtual Guitar (Karplus-Strong)")
+        synth_group.setStyleSheet(group_style)
+        synth_layout = QVBoxLayout(synth_group)
+        synth_layout.setContentsMargins(15, 25, 15, 15)
+
+        self.keyboard = VirtualKeyboard()
+        self.keyboard.note_triggered.connect(self.note_triggered.emit)
+        synth_layout.addWidget(self.keyboard)
+
+        # Synth parameters
+        params_layout = QHBoxLayout()
+
+        damping_label = QLabel("Damping:")
+        damping_label.setStyleSheet("color: white;")
+        params_layout.addWidget(damping_label)
+
+        self.damping_slider = QSlider(Qt.Orientation.Horizontal)
+        self.damping_slider.setRange(900, 999)
+        self.damping_slider.setValue(996)
+        self.damping_slider.setStyleSheet("""
+            QSlider::groove:horizontal {
+                background: #3a3a3a;
+                height: 8px;
+                border-radius: 4px;
+            }
+            QSlider::handle:horizontal {
+                background: #00ff88;
+                width: 18px;
+                margin: -5px 0;
+                border-radius: 9px;
+            }
         """)
+        params_layout.addWidget(self.damping_slider)
+
+        self.damping_value_label = QLabel("0.996")
+        self.damping_value_label.setStyleSheet("color: #00ff88; min-width: 50px;")
+        self.damping_slider.valueChanged.connect(
+            lambda v: self.damping_value_label.setText(f"{v / 1000:.3f}")
+        )
+        params_layout.addWidget(self.damping_value_label)
+
+        params_layout.addSpacing(30)
+
+        # Keyboard shortcut hint
+        hint_label = QLabel("Tip: Use keyboard keys A-K to play notes!")
+        hint_label.setStyleSheet("color: #666666; font-style: italic;")
+        params_layout.addWidget(hint_label)
+
+        params_layout.addStretch()
+        synth_layout.addLayout(params_layout)
+
+        layout.addWidget(synth_group)
+
+        # VU Meters section
+        meters_group = QGroupBox("Levels")
+        meters_group.setStyleSheet(group_style)
         meters_layout = QHBoxLayout(meters_group)
         meters_layout.setContentsMargins(20, 25, 20, 15)
 
@@ -331,7 +442,7 @@ class MainTab(QWidget):
 
         # Waveform section
         waveform_group = QGroupBox("Waveform")
-        waveform_group.setStyleSheet(meters_group.styleSheet())
+        waveform_group.setStyleSheet(group_style)
         waveform_layout = QVBoxLayout(waveform_group)
         waveform_layout.setContentsMargins(15, 25, 15, 15)
 
@@ -340,7 +451,7 @@ class MainTab(QWidget):
         self.waveform_plot.setLabel("bottom", "Samples")
         self.waveform_plot.setYRange(-1, 1)
         self.waveform_plot.addLegend(offset=(60, 10))
-        self.waveform_plot.setMinimumHeight(200)
+        self.waveform_plot.setMinimumHeight(150)
         self.input_wave_curve = self.waveform_plot.plot(
             pen=pg.mkPen("#00bfff", width=1), name="Input"
         )
@@ -350,6 +461,9 @@ class MainTab(QWidget):
 
         waveform_layout.addWidget(self.waveform_plot)
         layout.addWidget(waveform_group)
+
+    def get_damping(self) -> float:
+        return self.damping_slider.value() / 1000.0
 
 
 class SpectrumTab(QWidget):
@@ -380,7 +494,6 @@ class SpectrumTab(QWidget):
             }
         """
 
-        # Input spectrum
         input_group = QGroupBox("Input Spectrum")
         input_group.setStyleSheet(group_style)
         input_layout = QVBoxLayout(input_group)
@@ -389,9 +502,9 @@ class SpectrumTab(QWidget):
         self.input_plot = pg.PlotWidget()
         self.input_plot.setLabel("left", "Magnitude (dB)")
         self.input_plot.setLabel("bottom", "Frequency (Hz)")
-        self.input_plot.setYRange(-80, 0)
+        self.input_plot.setYRange(-200, 200)
         self.input_plot.setXRange(20, 20000)
-        self.input_plot.setLogMode(x=True, y=False)
+        self.input_plot.setLogMode(x=False, y=False)
         self.input_curve = self.input_plot.plot(pen=pg.mkPen("#00bfff", width=1.5))
         self.input_peak_curve = self.input_plot.plot(
             pen=pg.mkPen("#00bfff", width=1, style=Qt.PenStyle.DotLine)
@@ -400,7 +513,6 @@ class SpectrumTab(QWidget):
         input_layout.addWidget(self.input_plot)
         layout.addWidget(input_group)
 
-        # Output spectrum
         output_group = QGroupBox("Output Spectrum")
         output_group.setStyleSheet(group_style)
         output_layout = QVBoxLayout(output_group)
@@ -409,9 +521,9 @@ class SpectrumTab(QWidget):
         self.output_plot = pg.PlotWidget()
         self.output_plot.setLabel("left", "Magnitude (dB)")
         self.output_plot.setLabel("bottom", "Frequency (Hz)")
-        self.output_plot.setYRange(-80, 0)
+        self.output_plot.setYRange(-200, 200)
         self.output_plot.setXRange(20, 20000)
-        self.output_plot.setLogMode(x=True, y=False)
+        self.output_plot.setLogMode(x=False, y=False)
         self.output_curve = self.output_plot.plot(pen=pg.mkPen("#00ff88", width=1.5))
         self.output_peak_curve = self.output_plot.plot(
             pen=pg.mkPen("#00ff88", width=1, style=Qt.PenStyle.DotLine)
@@ -433,7 +545,6 @@ class PedalboardTab(QWidget):
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
 
-        # Signal chain label
         chain_label = QLabel(
             "Signal Chain: Input → Compressor → EQ → Distortion → Chorus → Delay → Reverb → Output"
         )
@@ -441,7 +552,6 @@ class PedalboardTab(QWidget):
         chain_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(chain_label)
 
-        # Pedals in a scroll area
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -459,7 +569,6 @@ class PedalboardTab(QWidget):
         pedal_layout.setSpacing(20)
         pedal_layout.setContentsMargins(20, 20, 20, 20)
 
-        # Create pedals
         self.compressor = CompressorPedal(self.sample_rate)
         self.eq = EQPedal(self.sample_rate)
         self.distortion = DistortionPedal()
@@ -467,7 +576,6 @@ class PedalboardTab(QWidget):
         self.delay = DelayPedal(self.sample_rate)
         self.reverb = ReverbPedal(self.sample_rate)
 
-        # Arrange in grid (2 rows x 3 columns)
         pedal_layout.addWidget(self.compressor, 0, 0)
         pedal_layout.addWidget(self.eq, 0, 1)
         pedal_layout.addWidget(self.distortion, 0, 2)
@@ -478,7 +586,6 @@ class PedalboardTab(QWidget):
         scroll.setWidget(pedal_container)
         layout.addWidget(scroll)
 
-        # Bypass all button
         self.bypass_all_btn = QPushButton("Bypass All Effects")
         self.bypass_all_btn.setCheckable(True)
         self.bypass_all_btn.clicked.connect(self._toggle_bypass_all)
@@ -535,7 +642,6 @@ class PedalboardTab(QWidget):
         for pedal in [self.compressor, self.eq, self.chorus, self.delay, self.reverb]:
             pedal.sample_rate = sample_rate
 
-        # Reset delay buffers
         self.delay.max_delay_samples = sample_rate
         self.delay.buffer = np.zeros(sample_rate)
         self.delay.write_idx = 0
