@@ -155,4 +155,3 @@ class KarplusStrongSynth:
     def clear(self):
         with self._lock:
             self.active_strings.clear()
-
