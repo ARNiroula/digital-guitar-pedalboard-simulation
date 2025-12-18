@@ -427,14 +427,23 @@ class DistortionPedal(Pedal):
 
         cutoff = 0.1 + 0.9 * self.tone
 
-        for i in range(num_samples):
-            # Apply gain and soft clip
-            sample = np.tanh(audio[i] * self.gain)
+        # Clipping threshold
+        clip_threshold = 0.8
 
-            # Simple low-pass filter for tone
+        for i in range(num_samples):
+            # Apply gain
+            sample = audio[i] * self.gain
+
+            # Hard clipping
+            if sample > clip_threshold:
+                sample = clip_threshold
+            elif sample < -clip_threshold:
+                sample = -clip_threshold
+
+            # Simple low-pass filter for tone control
             self._lp_state += cutoff * (sample - self._lp_state)
 
-            # Blend based on tone
+            # Blend filtered and original based on tone
             filtered = self._lp_state * (1 - self.tone * 0.5) + sample * (
                 self.tone * 0.5
             )
