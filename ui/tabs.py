@@ -25,6 +25,7 @@ from .pedal import (
     DelayPedal,
     ChorusPedal,
     ReverbPedal,
+    OverdrivePedal,
 )
 
 
@@ -571,6 +572,7 @@ class PedalboardTab(QWidget):
 
         self.compressor = CompressorPedal(self.sample_rate)
         self.eq = EQPedal(self.sample_rate)
+        self.overdrive = OverdrivePedal()
         self.distortion = DistortionPedal()
         self.chorus = ChorusPedal(self.sample_rate)
         self.delay = DelayPedal(self.sample_rate)
@@ -578,7 +580,8 @@ class PedalboardTab(QWidget):
 
         pedal_layout.addWidget(self.compressor, 0, 0)
         pedal_layout.addWidget(self.eq, 0, 1)
-        pedal_layout.addWidget(self.distortion, 0, 2)
+        pedal_layout.addWidget(self.overdrive, 0, 2)
+        pedal_layout.addWidget(self.distortion, 0, 3)
         pedal_layout.addWidget(self.chorus, 1, 0)
         pedal_layout.addWidget(self.delay, 1, 1)
         pedal_layout.addWidget(self.reverb, 1, 2)
@@ -613,6 +616,7 @@ class PedalboardTab(QWidget):
         pedals = [
             self.compressor,
             self.eq,
+            self.overdrive,
             self.distortion,
             self.chorus,
             self.delay,
@@ -631,6 +635,7 @@ class PedalboardTab(QWidget):
         return [
             self.compressor,
             self.eq,
+            self.overdrive,
             self.distortion,
             self.chorus,
             self.delay,

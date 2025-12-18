@@ -451,3 +451,56 @@ class DistortionPedal(Pedal):
             output[i] = filtered * self.level
 
         return output
+
+
+class OverdrivePedal(Pedal):
+    """Overdrive effect with soft clipping (tube-like)"""
+
+    def __init__(self, parent=None):
+        super().__init__("OVERDRIVE", "#CD853F", parent)
+
+        self.gain = 3.0
+        self.tone = 0.5
+        self.level = 0.7
+
+        self.gain_knob = Knob("DRIVE", 1.0, 15.0, self.gain)
+        self.gain_knob.valueChanged.connect(lambda v: setattr(self, "gain", v))
+        self.add_knob(self.gain_knob, 0, 0)
+
+        self.tone_knob = Knob("TONE", 0.0, 1.0, self.tone)
+        self.tone_knob.valueChanged.connect(lambda v: setattr(self, "tone", v))
+        self.add_knob(self.tone_knob, 0, 1)
+
+        self.level_knob = Knob("LEVEL", 0.0, 1.0, self.level)
+        self.level_knob.valueChanged.connect(lambda v: setattr(self, "level", v))
+        self.add_knob(self.level_knob, 1, 0)
+
+        self._lp_state = 0.0
+
+    def process(self, audio: np.ndarray) -> np.ndarray:
+        if not self.enabled:
+            return audio
+
+        num_samples = len(audio)
+        output = np.zeros(num_samples, dtype=np.float32)
+
+        cutoff = 0.1 + 0.9 * self.tone
+
+        for i in range(num_samples):
+            # Apply gain
+            sample = audio[i] * self.gain
+
+            # Soft clipping using tanh
+            sample = np.tanh(sample)
+
+            # Simple low-pass filter for tone control
+            self._lp_state += cutoff * (sample - self._lp_state)
+
+            # Blend filtered and original based on tone
+            filtered = self._lp_state * (1 - self.tone * 0.5) + sample * (
+                self.tone * 0.5
+            )
+
+            output[i] = filtered * self.level
+
+        return output
