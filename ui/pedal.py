@@ -283,6 +283,109 @@ class ChorusPedal(Pedal):
         return output
 
 
+class FlangerPedal(Pedal):
+    """Flanger effect - short modulated delay with feedback"""
+
+    def __init__(self, sample_rate: int = 44100, parent=None):
+        super().__init__("FLANGER", "#FF6347", parent)
+
+        self.sample_rate = sample_rate
+        self.rate = 0.5  # LFO rate in Hz (slow sweep)
+        self.depth = 0.7  # Modulation depth
+        self.feedback = 0.7  # Feedback amount (creates resonance)
+        self.mix = 0.5  # Dry/wet mix
+
+        # Delay buffer
+        self.max_delay_ms = 10.0
+        self.max_delay_samples = int(self.max_delay_ms * sample_rate / 1000)
+        self.buffer = np.zeros(self.max_delay_samples, dtype=np.float32)
+        self.write_idx = 0
+
+        # LFO phase
+        self.lfo_phase = 0.0
+
+        # Create knobs
+        self.rate_knob = Knob("RATE", 0.05, 5.0, self.rate)
+        self.rate_knob.valueChanged.connect(lambda v: setattr(self, "rate", v))
+        self.add_knob(self.rate_knob, 0, 0)
+
+        self.depth_knob = Knob("DEPTH", 0.0, 1.0, self.depth)
+        self.depth_knob.valueChanged.connect(lambda v: setattr(self, "depth", v))
+        self.add_knob(self.depth_knob, 0, 1)
+
+        self.feedback_knob = Knob("FDBK", 0.0, 0.95, self.feedback)
+        self.feedback_knob.valueChanged.connect(lambda v: setattr(self, "feedback", v))
+        self.add_knob(self.feedback_knob, 1, 0)
+
+        self.mix_knob = Knob("MIX", 0.0, 1.0, self.mix)
+        self.mix_knob.valueChanged.connect(lambda v: setattr(self, "mix", v))
+        self.add_knob(self.mix_knob, 1, 1)
+
+    def process(self, audio: np.ndarray) -> np.ndarray:
+        if not self.enabled:
+            return audio
+
+        num_samples = len(audio)
+        output = np.zeros(num_samples, dtype=np.float32)
+
+        # LFO increment per sample
+        lfo_inc = 2.0 * np.pi * self.rate / self.sample_rate
+
+        # Delay range: 0.1ms to max_delay_ms
+        min_delay_samples = int(0.1 * self.sample_rate / 1000)  # 0.1ms minimum
+        max_mod_samples = int(self.max_delay_ms * self.sample_rate / 1000 * self.depth)
+
+        for i in range(num_samples):
+            # Calculate modulated delay using sine LFO
+            lfo = (np.sin(self.lfo_phase) + 1.0) * 0.5
+
+            # Calculate delay in samples
+            delay_samples = min_delay_samples + int(lfo * max_mod_samples)
+            delay_samples = max(1, min(delay_samples, self.max_delay_samples - 2))
+
+            # Read from delay buffer with linear interpolation
+            read_pos = self.write_idx - delay_samples
+            if read_pos < 0:
+                read_pos += self.max_delay_samples
+
+            read_idx = int(read_pos) % self.max_delay_samples
+            next_idx = (read_idx + 1) % self.max_delay_samples
+            frac = read_pos - int(read_pos)
+
+            # Linear interpolation for smooth delay modulation
+            delayed = (
+                self.buffer[read_idx] * (1.0 - frac) + self.buffer[next_idx] * frac
+            )
+
+            # Input + feedback
+            input_sample = audio[i] + delayed * self.feedback
+
+            # Soft clip feedback to prevent runaway
+            input_sample = np.tanh(input_sample)
+
+            # Write to delay buffer
+            self.buffer[self.write_idx] = input_sample
+
+            # Mix dry and wet signals
+            output[i] = audio[i] * (1.0 - self.mix) + delayed * self.mix
+
+            # Advance write index
+            self.write_idx = (self.write_idx + 1) % self.max_delay_samples
+
+            # Advance LFO phase
+            self.lfo_phase += lfo_inc
+            if self.lfo_phase >= 2.0 * np.pi:
+                self.lfo_phase -= 2.0 * np.pi
+
+        return output
+
+    def reset(self):
+        """Reset the effect state"""
+        self.buffer = np.zeros(self.max_delay_samples, dtype=np.float32)
+        self.write_idx = 0
+        self.lfo_phase = 0.0
+
+
 class EQPedal(Pedal):
     def __init__(self, sample_rate: int = 44100, parent=None):
         super().__init__("EQ", "#8B4513", parent)

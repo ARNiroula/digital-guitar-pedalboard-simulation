@@ -26,6 +26,7 @@ from .pedal import (
     ChorusPedal,
     ReverbPedal,
     OverdrivePedal,
+    FlangerPedal,
 )
 
 
@@ -547,7 +548,7 @@ class PedalboardTab(QWidget):
         layout.setSpacing(15)
 
         chain_label = QLabel(
-            "Signal Chain: Input → Compressor → EQ → Distortion → Chorus → Delay → Reverb → Output"
+            "Signal Chain: Input → Compressor → EQ → Overdrive -> Distortion → Chorus -> Flanger → Delay → Reverb → Output"  # noqa
         )
         chain_label.setStyleSheet("color: #888888; font-size: 12px; padding: 5px;")
         chain_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -575,6 +576,7 @@ class PedalboardTab(QWidget):
         self.overdrive = OverdrivePedal()
         self.distortion = DistortionPedal()
         self.chorus = ChorusPedal(self.sample_rate)
+        self.flanger = FlangerPedal(self.sample_rate)
         self.delay = DelayPedal(self.sample_rate)
         self.reverb = ReverbPedal(self.sample_rate)
 
@@ -583,8 +585,9 @@ class PedalboardTab(QWidget):
         pedal_layout.addWidget(self.overdrive, 0, 2)
         pedal_layout.addWidget(self.distortion, 0, 3)
         pedal_layout.addWidget(self.chorus, 1, 0)
-        pedal_layout.addWidget(self.delay, 1, 1)
-        pedal_layout.addWidget(self.reverb, 1, 2)
+        pedal_layout.addWidget(self.flanger, 1, 1)
+        pedal_layout.addWidget(self.delay, 1, 2)
+        pedal_layout.addWidget(self.reverb, 1, 3)
 
         scroll.setWidget(pedal_container)
         layout.addWidget(scroll)
@@ -619,6 +622,7 @@ class PedalboardTab(QWidget):
             self.overdrive,
             self.distortion,
             self.chorus,
+            self.flanger,
             self.delay,
             self.reverb,
         ]
@@ -638,6 +642,7 @@ class PedalboardTab(QWidget):
             self.overdrive,
             self.distortion,
             self.chorus,
+            self.flanger,
             self.delay,
             self.reverb,
         ]
@@ -647,6 +652,14 @@ class PedalboardTab(QWidget):
         for pedal in [self.compressor, self.eq, self.chorus, self.delay, self.reverb]:
             pedal.sample_rate = sample_rate
 
+        # Reset delay-based effect buffers
         self.delay.max_delay_samples = sample_rate
-        self.delay.buffer = np.zeros(sample_rate)
+        self.delay.buffer = np.zeros(sample_rate, dtype=np.float32)
         self.delay.write_idx = 0
+
+        # Reset flanger buffer
+        self.flanger.max_delay_samples = int(
+            self.flanger.max_delay_ms * sample_rate / 1000
+        )
+        self.flanger.buffer = np.zeros(self.flanger.max_delay_samples, dtype=np.float32)
+        self.flanger.write_idx = 0
