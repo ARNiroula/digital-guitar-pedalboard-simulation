@@ -133,11 +133,6 @@ class MainWindow(QMainWindow):
             lambda v: self.synth.set_damping(v / 1000.0)
         )
 
-        # self.tabs.addTab(self.main_tab, "🎸 Main")
-        # self.tabs.addTab(self.spectrum_tab, "📊 Spectrum")
-        # self.tabs.addTab(self.pedalboard_tab, "🎛️ Pedalboard")
-        # self.tabs.addTab(self.settings_tab, "⚙️ Settings")
-
         self.tabs.addTab(self.main_tab, "Main")
         self.tabs.addTab(self.spectrum_tab, "Spectrum")
         self.tabs.addTab(self.pedalboard_tab, "Pedalboard")
