@@ -27,6 +27,7 @@ class SpectrumAnalyzer:
         # Convert to magnitude in dB
         magnitude = np.abs(fft)
         # Avoid log(0) by adding small epsilon
-        magnitude_db = 20 * np.log10(magnitude + 1e-10)
+        # magnitude_db = 20 * np.log10(magnitude + 1e-10)
 
-        return self.freqs, magnitude_db
+        # return self.freqs, magnitude_db
+        return self.freqs, magnitude
