@@ -129,47 +129,254 @@ class DelayPedal(Pedal):
 
 
 class ReverbPedal(Pedal):
+    """
+    Feedback Delay Network Reverb with Early Reflections
+    """
+
     def __init__(self, sample_rate: int = 44100, parent=None):
         super().__init__("REVERB", "#4B0082", parent)
 
         self.sample_rate = sample_rate
-        self.room_size = 0.5
+        self.decay = 0.5
         self.damping = 0.5
-        self.mix = 0.3
+        self.mix = 0.3  # Dry/wet mix
+        self.size = 0.5  # Room size
 
-        self._init_buffers(sample_rate)
+        # Number of FDN delay lines
+        self.num_delays = 4
 
-        self.room_knob = Knob("ROOM", 0.0, 1.0, self.room_size)
-        self.room_knob.valueChanged.connect(lambda v: setattr(self, "room_size", v))
-        self.add_knob(self.room_knob, 0, 0)
+        self._init_early_reflections(sample_rate)
+        self._init_fdn_buffers(sample_rate)
+        self._init_matrix()
+
+        # Knobs
+        self.decay_knob = Knob("DECAY", 0.0, 1.0, self.decay)
+        self.decay_knob.valueChanged.connect(lambda v: setattr(self, "decay", v))
+        self.add_knob(self.decay_knob, 0, 0)
+
+        self.size_knob = Knob("SIZE", 0.0, 1.0, self.size)
+        self.size_knob.valueChanged.connect(self._on_size_changed)
+        self.add_knob(self.size_knob, 0, 1)
 
         self.damp_knob = Knob("DAMP", 0.0, 1.0, self.damping)
         self.damp_knob.valueChanged.connect(lambda v: setattr(self, "damping", v))
-        self.add_knob(self.damp_knob, 0, 1)
+        self.add_knob(self.damp_knob, 1, 0)
 
         self.mix_knob = Knob("MIX", 0.0, 1.0, self.mix)
         self.mix_knob.valueChanged.connect(lambda v: setattr(self, "mix", v))
-        self.add_knob(self.mix_knob, 1, 0)
+        self.add_knob(self.mix_knob, 1, 1)
 
-    def _init_buffers(self, sample_rate: int):
-        # Comb filter delays (Schroeder reverb design)
-        # Using selected numbers to reduce metallic resonance
-        comb_delays_ms = [29.7, 37.1, 41.1, 43.7]
-        self.comb_delays = [max(1, int(d * sample_rate / 1000)) for d in comb_delays_ms]
-        self.comb_buffers = [
-            np.zeros(d + 1000, dtype=np.float32) for d in self.comb_delays
-        ]
-        self.comb_indices = [0] * 4
-        self.comb_filters = [0.0] * 4
+    def _init_early_reflections(self, sample_rate: int):
+        """
+        Initialize early reflection tap delays
+        Simulates first reflections off walls, ceiling, floor
+        """
+        # Room size scale (0.5x to 2.0x)
+        size_scale = 0.5 + self.size * 1.5
 
-        allpass_delays_ms = [5.0, 1.7]
-        self.allpass_delays = [
-            max(1, int(d * sample_rate / 1000)) for d in allpass_delays_ms
+        # Early reflection configuration
+        # Delays based on typical room reflection patterns
+        # Gains decrease with time (inverse square law approximation)
+        # Pan values: -1 (left) to 1 (right)
+        self.er_config = [
+            # (delay_ms, gain, description)
+            (7.0, 0.85, "Front wall"),
+            (11.0, 0.75, "Side wall L"),
+            (13.0, 0.72, "Side wall R"),
+            (19.0, 0.65, "Ceiling"),
+            (23.0, 0.58, "Back wall"),
+            (29.0, 0.50, "Floor bounce"),
+            (37.0, 0.42, "Corner 1"),
+            (41.0, 0.38, "Corner 2"),
+            (47.0, 0.32, "Double bounce 1"),
+            (53.0, 0.28, "Double bounce 2"),
+            (59.0, 0.22, "Triple bounce 1"),
+            (67.0, 0.18, "Triple bounce 2"),
         ]
-        self.allpass_buffers = [
-            np.zeros(d + 100, dtype=np.float32) for d in self.allpass_delays
+
+        # Calculate delay times in samples (scaled by room size)
+        self.er_delays = [
+            max(1, int(d * size_scale * sample_rate / 1000))
+            for d, g, _ in self.er_config
         ]
-        self.allpass_indices = [0] * 2
+
+        # Gains (also scale slightly with room size - larger rooms = more absorption)
+        absorption_factor = 1.0 - (self.size * 0.2)  # Larger rooms absorb more
+        self.er_gains = [g * absorption_factor for _, g, _ in self.er_config]
+
+        # Single delay buffer for all early reflections
+        max_er_delay = max(self.er_delays) + 100
+        self.er_buffer = np.zeros(max_er_delay, dtype=np.float32)
+        self.er_write_idx = 0
+
+        # Low-pass filter states for each ER tap (simulate wall absorption)
+        self.er_lp_states = [0.0] * len(self.er_config)
+
+        # Pre-delay (time before any reflections, creates sense of distance)
+        self.predelay_ms = 10.0 * size_scale
+        self.predelay_samples = max(1, int(self.predelay_ms * sample_rate / 1000))
+        self.predelay_buffer = np.zeros(self.predelay_samples + 100, dtype=np.float32)
+        self.predelay_write_idx = 0
+
+    def _init_fdn_buffers(self, sample_rate: int):
+        """Initialize FDN delay buffers with prime-length delays"""
+        # Room size scale
+        size_scale = 0.5 + self.size * 1.5
+
+        # Base delay times in ms (mutually prime for maximum density)
+        # Longer than ER delays to create smooth transition
+        base_delays_ms = [67.0, 79.0, 89.0, 97.0]  # Prime numbers
+
+        self.delay_times_ms = [d * size_scale for d in base_delays_ms]
+        self.delay_samples = [
+            max(1, int(d * sample_rate / 1000)) for d in self.delay_times_ms
+        ]
+
+        # Create delay buffers
+        self.delay_buffers = [
+            np.zeros(d + 100, dtype=np.float32) for d in self.delay_samples
+        ]
+        self.write_indices = [0] * self.num_delays
+
+        # Low-pass filter states for damping in FDN
+        self.lp_states = [0.0] * self.num_delays
+
+    def _init_matrix(self):
+        """
+        Initialize Hadamard feedback matrix
+        Orthogonal and energy-preserving
+        """
+        # 4x4 Hadamard matrix (normalized)
+        self.feedback_matrix = (
+            np.array(
+                [[1, 1, 1, 1], [1, -1, 1, -1], [1, 1, -1, -1], [1, -1, -1, 1]],
+                dtype=np.float32,
+            )
+            * 0.5
+        )
+
+    def _on_size_changed(self, value: float):
+        """Reinitialize buffers when size changes"""
+        self.size = value
+        self._init_early_reflections(self.sample_rate)
+        self._init_fdn_buffers(self.sample_rate)
+
+    def _apply_matrix(self, inputs: list) -> list:
+        """Apply Hadamard feedback matrix"""
+        outputs = [0.0] * self.num_delays
+        for i in range(self.num_delays):
+            for j in range(self.num_delays):
+                outputs[i] += self.feedback_matrix[i, j] * inputs[j]
+        return outputs
+
+    def _process_early_reflections(self, sample: float) -> float:
+        """
+        Process early reflections using multi-tap delay
+        Returns the sum of all early reflection taps
+        """
+        er_buffer = self.er_buffer
+        buf_len = len(er_buffer)
+        write_idx = self.er_write_idx
+
+        # Write input to ER buffer
+        er_buffer[write_idx] = sample
+
+        # Sum all reflection taps
+        er_output = 0.0
+
+        # High-frequency damping coefficient for ER
+        # Walls absorb high frequencies
+        er_damp = 0.3 + self.damping * 0.4
+
+        for i, delay in enumerate(self.er_delays):
+            # Read from delay buffer
+            read_idx = (write_idx - delay) % buf_len
+            tap_output = er_buffer[read_idx]
+
+            # Apply per-tap low-pass filter (wall absorption)
+            self.er_lp_states[i] = (
+                tap_output * (1.0 - er_damp) + self.er_lp_states[i] * er_damp
+            )
+
+            # Add to output with gain
+            er_output += self.er_lp_states[i] * self.er_gains[i]
+
+        # Advance write index
+        self.er_write_idx = (write_idx + 1) % buf_len
+
+        # Normalize (prevent clipping)
+        er_output *= 0.3
+
+        return er_output
+
+    def _process_predelay(self, sample: float) -> float:
+        """Simple pre-delay buffer"""
+        buf = self.predelay_buffer
+        buf_len = len(buf)
+        write_idx = self.predelay_write_idx
+
+        # Read delayed sample
+        read_idx = (write_idx - self.predelay_samples) % buf_len
+        output = buf[read_idx]
+
+        # Write new sample
+        buf[write_idx] = sample
+
+        # Advance write index
+        self.predelay_write_idx = (write_idx + 1) % buf_len
+
+        return output
+
+    def _process_fdn(self, sample: float) -> float:
+        """
+        Process through Feedback Delay Network
+        """
+        # Calculate decay parameters
+        t60 = 0.5 + self.decay * 4.5  # Reverb time 0.5s to 5s
+        damp_coef = self.damping * 0.7
+
+        # Read from all delay lines
+        delay_outputs = []
+        for j in range(self.num_delays):
+            buf = self.delay_buffers[j]
+            buf_len = len(buf)
+            delay = self.delay_samples[j]
+            write_idx = self.write_indices[j]
+
+            read_idx = (write_idx - delay) % buf_len
+            delay_outputs.append(buf[read_idx])
+
+        # Apply feedback matrix (Hadamard mixing)
+        mixed = self._apply_matrix(delay_outputs)
+
+        # Process each delay line
+        for j in range(self.num_delays):
+            buf = self.delay_buffers[j]
+            buf_len = len(buf)
+            write_idx = self.write_indices[j]
+            delay_time = self.delay_times_ms[j] / 1000.0
+
+            # Calculate feedback gain for uniform decay
+            feedback_gain = 10.0 ** (-3.0 * delay_time / t60)
+            feedback_gain = min(feedback_gain, 0.98)
+
+            # Apply damping (low-pass filter)
+            filtered = mixed[j] * (1.0 - damp_coef) + self.lp_states[j] * damp_coef
+            self.lp_states[j] = filtered
+
+            # Apply feedback gain and soft clip
+            feedback_sample = np.tanh(filtered * feedback_gain)
+
+            # Write input + feedback to buffer
+            buf[write_idx] = sample * 0.25 + feedback_sample
+
+            # Advance write index
+            self.write_indices[j] = (write_idx + 1) % buf_len
+
+        # Sum delay outputs for wet signal
+        fdn_output = sum(delay_outputs) * 0.25
+
+        return fdn_output
 
     def process(self, audio: np.ndarray) -> np.ndarray:
         if not self.enabled:
@@ -178,91 +385,46 @@ class ReverbPedal(Pedal):
         num_samples = len(audio)
         output = np.zeros(num_samples, dtype=np.float32)
 
-        # Feedback scales with room size
-        # Range: 0.5 to 0.85 (so it won't exceed audio limits)
-        feedback = 0.5 + 0.35 * self.room_size
-
-        # Damping coefficient for low-pass filter in feedback path
-        damp1 = self.damping * 0.4
-        damp2 = 1.0 - damp1
-
-        # Input gain reduction to prevent clipping
-        input_gain = 0.2
-
         for i in range(num_samples):
-            # Scale input to prevent accumulation overflow
-            sample = audio[i] * input_gain
+            dry_sample = audio[i]
 
-            # Parallel comb filters
-            comb_out = 0.0
+            # Pre-delay
+            predelayed = self._process_predelay(dry_sample)
 
-            for j in range(4):
-                delay = self.comb_delays[j]
-                buf = self.comb_buffers[j]
-                buf_len = len(buf)
-                idx = self.comb_indices[j] % buf_len
+            # Early reflections (distinct room bounces)
+            er_output = self._process_early_reflections(predelayed)
 
-                read_idx = (idx - delay) % buf_len
-                delayed = buf[read_idx]
+            # FDN late reverb (dense tail)
+            fdn_input = predelayed + er_output * 0.5
+            fdn_output = self._process_fdn(fdn_input)
 
-                # Low-pass filter in feedback path (simulate air absorption)
-                self.comb_filters[j] = delayed * damp2 + self.comb_filters[j] * damp1
+            # Combine ER and FDN
+            wet = er_output + fdn_output
 
-                # Write input + filtered feedback to buffer
-                # Soft clip the feedback to prevent runaway
-                feedback_sample = self.comb_filters[j] * feedback
-                feedback_sample = np.tanh(feedback_sample)  # Soft limit feedback
-
-                buf[idx] = sample + feedback_sample
-
-                comb_out += delayed
-                self.comb_indices[j] = (idx + 1) % buf_len
-
-            # Average the comb outputs
-            comb_out *= 0.25
-
-            # Series allpass filters (adds density without changing frequency response much)
-            allpass_out = comb_out
-
-            for j in range(2):
-                delay = self.allpass_delays[j]
-                buf = self.allpass_buffers[j]
-                buf_len = len(buf)
-                idx = self.allpass_indices[j] % buf_len
-
-                read_idx = (idx - delay) % buf_len
-                delayed = buf[read_idx]
-
-                # Allpass coefficient
-                allpass_coef = 0.5
-
-                # Allpass filter formula
-                buf[idx] = allpass_out + delayed * allpass_coef
-                allpass_out = delayed - allpass_out * allpass_coef
-
-                self.allpass_indices[j] = (idx + 1) % buf_len
-
-            # Soft clip the wet signal before mixing
-            allpass_out = np.tanh(allpass_out)
+            # Soft clip wet signal
+            wet = np.tanh(wet)
 
             # Mix dry and wet
-            dry = audio[i] * (1.0 - self.mix)
-            wet = allpass_out * self.mix * 2.0  # Makeup gain for wet signal
+            output[i] = dry_sample * (1.0 - self.mix) + wet * self.mix * 1.5
 
-            output[i] = dry + wet
-
-        # Final soft clip to ensure output stays in bounds
-        return np.tanh(output)
+        return output
 
     def reset(self):
-        """Reset all buffers"""
-        for buf in self.comb_buffers:
+        """Reset all buffers and states"""
+        # Reset ER buffers
+        self.er_buffer.fill(0.0)
+        self.er_write_idx = 0
+        self.er_lp_states = [0.0] * len(self.er_config)
+
+        # Reset pre-delay
+        self.predelay_buffer.fill(0.0)
+        self.predelay_write_idx = 0
+
+        # Reset FDN buffers
+        for buf in self.delay_buffers:
             buf.fill(0.0)
-        for buf in self.allpass_buffers:
-            buf.fill(0.0)
-        self.comb_filters = [0.0] * 4
-        self.comb_indices = [0] * 4
-        self.allpass_indices = [0] * 2
+        self.write_indices = [0] * self.num_delays
+        self.lp_states = [0.0] * self.num_delays
 
 
 class ChorusPedal(Pedal):
