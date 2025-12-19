@@ -33,6 +33,7 @@ Visualization of input/output and their spectrum graph will also be available.
     - [ ] Reverb (there is multiple algorithm to test out for reverb as its super complex!)
     - [ ] Phaser
     - [ ] Wah
+- [ ] Drag and Drop effect pedals so that the user can modify the effect chain
 - [x] Settings to control the Input Source, Audio Devices, Audio Settings (sampling rate, buffer size)
 
 ... and other Milestones that'll be added later!
