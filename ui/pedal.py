@@ -152,6 +152,8 @@ class ReverbPedal(Pedal):
         self.add_knob(self.mix_knob, 1, 0)
 
     def _init_buffers(self, sample_rate: int):
+        # Comb filter delays (Schroeder reverb design)
+        # Using selected numbers to reduce metallic resonance
         comb_delays_ms = [29.7, 37.1, 41.1, 43.7]
         self.comb_delays = [max(1, int(d * sample_rate / 1000)) for d in comb_delays_ms]
         self.comb_buffers = [
@@ -175,11 +177,23 @@ class ReverbPedal(Pedal):
 
         num_samples = len(audio)
         output = np.zeros(num_samples, dtype=np.float32)
-        feedback = 0.7 + 0.28 * self.room_size
-        damp = self.damping * 0.4
+
+        # Feedback scales with room size
+        # Range: 0.5 to 0.85 (so it won't exceed audio limits)
+        feedback = 0.5 + 0.35 * self.room_size
+
+        # Damping coefficient for low-pass filter in feedback path
+        damp1 = self.damping * 0.4
+        damp2 = 1.0 - damp1
+
+        # Input gain reduction to prevent clipping
+        input_gain = 0.2
 
         for i in range(num_samples):
-            sample = audio[i]
+            # Scale input to prevent accumulation overflow
+            sample = audio[i] * input_gain
+
+            # Parallel comb filters
             comb_out = 0.0
 
             for j in range(4):
@@ -191,17 +205,25 @@ class ReverbPedal(Pedal):
                 read_idx = (idx - delay) % buf_len
                 delayed = buf[read_idx]
 
-                self.comb_filters[j] = (
-                    delayed * (1 - damp) + self.comb_filters[j] * damp
-                )
-                buf[idx] = sample + self.comb_filters[j] * feedback
+                # Low-pass filter in feedback path (simulate air absorption)
+                self.comb_filters[j] = delayed * damp2 + self.comb_filters[j] * damp1
+
+                # Write input + filtered feedback to buffer
+                # Soft clip the feedback to prevent runaway
+                feedback_sample = self.comb_filters[j] * feedback
+                feedback_sample = np.tanh(feedback_sample)  # Soft limit feedback
+
+                buf[idx] = sample + feedback_sample
 
                 comb_out += delayed
                 self.comb_indices[j] = (idx + 1) % buf_len
 
+            # Average the comb outputs
             comb_out *= 0.25
 
+            # Series allpass filters (adds density without changing frequency response much)
             allpass_out = comb_out
+
             for j in range(2):
                 delay = self.allpass_delays[j]
                 buf = self.allpass_buffers[j]
@@ -211,14 +233,36 @@ class ReverbPedal(Pedal):
                 read_idx = (idx - delay) % buf_len
                 delayed = buf[read_idx]
 
-                buf[idx] = allpass_out + delayed * 0.5
-                allpass_out = delayed - allpass_out * 0.5
+                # Allpass coefficient
+                allpass_coef = 0.5
+
+                # Allpass filter formula
+                buf[idx] = allpass_out + delayed * allpass_coef
+                allpass_out = delayed - allpass_out * allpass_coef
 
                 self.allpass_indices[j] = (idx + 1) % buf_len
 
-            output[i] = sample * (1 - self.mix) + allpass_out * self.mix
+            # Soft clip the wet signal before mixing
+            allpass_out = np.tanh(allpass_out)
 
-        return output
+            # Mix dry and wet
+            dry = audio[i] * (1.0 - self.mix)
+            wet = allpass_out * self.mix * 2.0  # Makeup gain for wet signal
+
+            output[i] = dry + wet
+
+        # Final soft clip to ensure output stays in bounds
+        return np.tanh(output)
+
+    def reset(self):
+        """Reset all buffers"""
+        for buf in self.comb_buffers:
+            buf.fill(0.0)
+        for buf in self.allpass_buffers:
+            buf.fill(0.0)
+        self.comb_filters = [0.0] * 4
+        self.comb_indices = [0] * 4
+        self.allpass_indices = [0] * 2
 
 
 class ChorusPedal(Pedal):
