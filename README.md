@@ -30,7 +30,7 @@ Visualization of input/output and their spectrum graph will also be available.
     - [x] Chorus
     - [x] Flanger
     - [x] Delay
-    - [x] Reverb
+    - [ ] Reverb (there is multiple algorithm to test out for reverb as its super complex!)
     - [ ] Phaser
     - [ ] Wah
 - [x] Settings to control the Input Source, Audio Devices, Audio Settings (sampling rate, buffer size)
