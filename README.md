@@ -34,6 +34,7 @@ Visualization of input/output and their spectrum graph will also be available.
     - [ ] Phaser
     - [ ] Wah
 - [x] Settings to control the Input Source, Audio Devices, Audio Settings (sampling rate, buffer size)
+
 ... and other Milestones that'll be added later!
 
 ## To run this project
