@@ -18,11 +18,11 @@ Visualization of input/output and their spectrum graph will also be available.
 - [x] Basic Input/Output audio graph
 - [x] Basic Spectrum graph
     - [x] Show frequency spectrum for input and output signal
-- [] Flexible Spectrum graph
-    - [] Option to modify showing log/plain graph
-    - [] Option to show either decibel or simple magnitude calculated through FFT
+- [ ] Flexible Spectrum graph
+    - [ ] Option to modify showing log/plain graph
+    - [ ] Option to show either decibel or simple magnitude calculated through FFT
 - [x] Keyboard as Keyboard shortcuts to use karplus-strong synth for string sound
-- [] Effects
+- [ ] Effects
     - [x] Compressor
     - [x] EQ
     - [x] Overdrive
@@ -31,8 +31,8 @@ Visualization of input/output and their spectrum graph will also be available.
     - [x] Flanger
     - [x] Delay
     - [x] Reverb
-    - [] Wah
-    - [] Phaser
+    - [ ] Phaser
+    - [ ] Wah
 - [x] Settings to control the Input Source, Audio Devices, Audio Settings (sampling rate, buffer size)
 ... and other Milestones that'll be added later!
 
