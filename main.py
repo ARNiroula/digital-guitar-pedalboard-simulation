@@ -1,7 +1,6 @@
 import sys
 
 import numpy as np
-import pyaudio
 import pyqtgraph as pg
 from PyQt6.QtCore import QThreadPool, QTimer, Qt
 from PyQt6.QtWidgets import (
@@ -21,17 +20,6 @@ from ui.tabs import MainTab, SettingsTab, SpectrumTab, PedalboardTab
 from audio_signal import AudioIO
 from visualizer import SpectrumAnalyzer
 from io_manager.synthetic_input import KarplusStrongSynth
-
-
-# PyAudio Value
-# TODO: make the below constant value changable using the GUI input
-BLOCKLEN = 64  # Number of frames per block
-WIDTH = 2  # Bytes per sample
-CHANNELS = 1  # Mono
-RATE = 44100  # Frames per second
-
-p = pyaudio.PyAudio()
-PA_FORMAT = pyaudio.paInt16
 
 
 class MainWindow(QMainWindow):
