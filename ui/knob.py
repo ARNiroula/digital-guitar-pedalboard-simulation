@@ -168,3 +168,83 @@ class Knob(QWidget):
         delta = event.angleDelta().y() / 120  # Standard wheel step
         sensitivity = (self.max_val - self.min_val) / 20
         self.value = self._value + delta * sensitivity
+
+
+class DiscreteKnob(Knob):
+    """Rotary knob for discrete values (strings or numbers)"""
+
+    indexChanged = pyqtSignal(int)
+    valueChangedDiscrete = pyqtSignal(object)
+
+    def __init__(
+        self,
+        values: list = [],
+        label: str = "Discrete Knob",
+        default_index: int = 0,
+        parent=None,
+    ):
+        if not values:
+            raise ValueError("Values List Must Not be Empty")
+
+        self.values = values
+        self.count = len(values)
+
+        super().__init__(
+            label=label,
+            min_val=0,
+            max_val=self.count - 1,
+            default=float(default_index),
+            parent=parent,
+        )
+
+        self._index = default_index
+
+        # Re-emit continuous changes as discrete
+        self.valueChanged.connect(self._on_continuous_changed)
+
+    # Public API
+    @property
+    def index(self) -> int:
+        return self._index
+
+    @property
+    def current_value(self):
+        return self.values[self._index]
+
+    def set_index(self, index: int):
+        index = max(0, min(self.count - 1, index))
+        self.value = float(index)  # drives snapping logic
+
+    # Protected Methods
+    def _on_continuous_changed(self, val: float):
+        snapped = int(round(val))
+
+        if snapped != self._index:
+            self._index = snapped
+
+            # Force knob to exact snapped position
+            if self._value != snapped:
+                self._value = snapped
+                self.update()
+
+            self.indexChanged.emit(self._index)
+            self.valueChangedDiscrete.emit(self.current_value)
+
+    # Display Override
+    def paintEvent(self, event):
+        super().paintEvent(event)
+
+        # Draw discrete value text on top
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        painter.setPen(QColor("#cccccc"))
+        painter.setFont(QFont("Arial", 9, QFont.Weight.Bold))
+
+        painter.drawText(
+            QRectF(0, 52, self.width(), 16),
+            Qt.AlignmentFlag.AlignCenter,
+            str(self.current_value),
+        )
+
+        painter.end()
