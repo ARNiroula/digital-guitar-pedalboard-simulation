@@ -2,7 +2,7 @@ import numpy as np
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QPushButton, QVBoxLayout, QLabel, QFrame, QGridLayout
 
-from .knob import Knob
+from .knob import Knob, DiscreteKnob
 
 
 class Pedal(QFrame):
@@ -813,3 +813,85 @@ class OverdrivePedal(Pedal):
             output[i] = filtered * self.level
 
         return output
+
+
+class TremoloPedal(Pedal):
+    def __init__(self, sample_rate: int = 44100, parent=None):
+        super().__init__("Tremelo", "#FF6123", parent)
+
+        self.sample_rate = sample_rate
+        self.rate = 0.5  # LFO rate
+        self.depth = 0.7  # Modulation Depth
+        self.wave = "Sine"
+        # LFO Phase
+        self.lfo_phase = 0.0
+
+        # Create knobs
+        self.rate_knob = Knob("RATE", 0.05, 5.0, self.rate)
+        self.rate_knob.valueChanged.connect(lambda v: setattr(self, "rate", v))
+        self.add_knob(self.rate_knob, 0, 0)
+
+        self.depth_knob = Knob("DEPTH", 0.0, 1.0, self.depth)
+        self.depth_knob.valueChanged.connect(lambda v: setattr(self, "depth", v))
+        self.add_knob(self.depth_knob, 0, 1)
+
+        self.wave_knob = DiscreteKnob(
+            label="WAVE",
+            values=["Sine", "Square", "Saw", "Triangle"],
+            default_index=0,
+        )
+        self.wave_knob.valueChangedDiscrete.connect(lambda v: setattr(self, "wave", v))
+        self.add_knob(self.wave_knob, 1, 0)
+
+    def _get_lfo_value(self, phase: float) -> float:
+        """Generate LFO value based on waveform"""
+
+        # Normalize Phase
+        norm_phase = phase / (2.0 * np.pi)
+        aug_phase = norm_phase
+        if self.wave == "Sine":
+            aug_phase = phase
+
+        waves = {
+            "Sine": lambda x: np.sin(x),
+            "Square": lambda x: 1.0 if x % 1.0 < 0.5 else -1,
+            "Saw": lambda x: 2.0 * (x % 1.0) - 1.0,
+            "Triangle": lambda x: 4.0 * abs((x % 1.0) - 0.5) - 1.0,
+        }
+
+        return waves.get(self.wave, "Sine")(aug_phase)
+
+    def process(self, audio: np.ndarray) -> np.ndarray:
+        if not self.enabled:
+            return audio
+
+        num_samples = len(audio)
+        output = np.zeros(num_samples, dtype=np.float32)
+
+        # LFO increments
+        lfo_inc = 2.0 * np.pi * self.rate / self.sample_rate
+
+        for i in range(num_samples):
+            # Get LFO value (-1 to 1)
+            lfo = self._get_lfo_value(self.lfo_phase)
+
+            # Convert LFO to amplitude modulation
+            # depth = 0; no effect
+            # depth = 1; max effect
+            amplitude = 1.0 - (self.depth * 0.5 * (1.0 + lfo))
+
+            # Apply output
+            output[i] = audio[i] * amplitude
+
+            # Update LFO phase
+            self.lfo_phase += lfo_inc
+
+            # Out of bound check
+            if self.lfo_phase >= 2.0 * np.pi:
+                self.lfo_phase -= 2.0 * np.pi
+
+        return output
+
+    def reset(self):
+        """Reset the effect"""
+        self.lfo_phase = 0.0

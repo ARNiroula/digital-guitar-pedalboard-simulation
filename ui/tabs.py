@@ -27,6 +27,7 @@ from .pedal import (
     ReverbPedal,
     OverdrivePedal,
     FlangerPedal,
+    TremoloPedal,
 )
 
 
@@ -548,7 +549,7 @@ class PedalboardTab(QWidget):
         layout.setSpacing(15)
 
         chain_label = QLabel(
-            "Signal Chain: Input → Compressor → EQ → Overdrive -> Distortion → Chorus -> Flanger → Delay → Reverb → Output"  # noqa
+            "Signal Chain: Input → Compressor → EQ → Overdrive -> Distortion → Chorus -> Flanger -> Tremolo → Delay → Reverb → Output"  # noqa
         )
         chain_label.setStyleSheet("color: #888888; font-size: 12px; padding: 5px;")
         chain_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -577,6 +578,7 @@ class PedalboardTab(QWidget):
         self.distortion = DistortionPedal()
         self.chorus = ChorusPedal(self.sample_rate)
         self.flanger = FlangerPedal(self.sample_rate)
+        self.tremolo = TremoloPedal(self.sample_rate)
         self.delay = DelayPedal(self.sample_rate)
         self.reverb = ReverbPedal(self.sample_rate)
 
@@ -586,8 +588,9 @@ class PedalboardTab(QWidget):
         pedal_layout.addWidget(self.distortion, 0, 3)
         pedal_layout.addWidget(self.chorus, 1, 0)
         pedal_layout.addWidget(self.flanger, 1, 1)
-        pedal_layout.addWidget(self.delay, 1, 2)
-        pedal_layout.addWidget(self.reverb, 1, 3)
+        pedal_layout.addWidget(self.tremolo, 1, 2)
+        pedal_layout.addWidget(self.delay, 1, 3)
+        pedal_layout.addWidget(self.reverb, 2, 0)
 
         scroll.setWidget(pedal_container)
         layout.addWidget(scroll)
@@ -623,6 +626,7 @@ class PedalboardTab(QWidget):
             self.distortion,
             self.chorus,
             self.flanger,
+            self.tremolo,
             self.delay,
             self.reverb,
         ]
@@ -643,6 +647,7 @@ class PedalboardTab(QWidget):
             self.distortion,
             self.chorus,
             self.flanger,
+            self.tremolo,
             self.delay,
             self.reverb,
         ]
