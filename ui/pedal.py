@@ -895,3 +895,14 @@ class TremoloPedal(Pedal):
     def reset(self):
         """Reset the effect"""
         self.lfo_phase = 0.0
+
+
+class PhaserPedal(Pedal):
+    def __init__():
+        pass
+
+    def process(self, audio: np.ndarray) -> np.ndarray:
+        pass
+
+    def reset(self):
+        pass
