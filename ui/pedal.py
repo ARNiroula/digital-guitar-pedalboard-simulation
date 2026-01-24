@@ -898,11 +898,109 @@ class TremoloPedal(Pedal):
 
 
 class PhaserPedal(Pedal):
-    def __init__():
-        pass
+    def __init__(self, sample_rate: int = 44100, parent=None):
+        super().__init__("Phaser", "#9370DB", parent)
+
+        self.sample_rate = sample_rate
+        self.rate = 0.5  # LFO rate
+        self.depth = 0.7  # Modulation Depth
+        self.feedback = 0.5  # Feedback Amount
+        self.mix = 0.5  # Dry/Wet Mix
+
+        # Num of all-pass filter stages
+        self.num_stages = 4
+
+        # All-pass filter states for each stage
+        self.ap_states = [0.0] * self.num_stages
+        # LFO phase
+        self.lfo_phase = 0.0
+        # Feedback buffer
+        self.feedback_sample = 0.0
+
+        # Create knobs
+        self.rate_knob = Knob("RATE", 0.05, 5.0, self.rate)
+        self.rate_knob.valueChanged.connect(lambda v: setattr(self, "rate", v))
+        self.add_knob(self.rate_knob, 0, 0)
+
+        self.depth_knob = Knob("DEPTH", 0.0, 1.0, self.depth)
+        self.depth_knob.valueChanged.connect(lambda v: setattr(self, "depth", v))
+        self.add_knob(self.depth_knob, 0, 1)
+
+        self.feedback_knob = Knob("FDBK", 0.0, 0.95, self.feedback)
+        self.feedback_knob.valueChanged.connect(lambda v: setattr(self, "feedback", v))
+        self.add_knob(self.feedback_knob, 1, 0)
+
+        self.mix_knob = Knob("MIX", 0.0, 1.0, self.mix)
+        self.mix_knob.valueChanged.connect(lambda v: setattr(self, "mix", v))
+        self.add_knob(self.mix_knob, 1, 1)
+
+    def _all_pass_filter(self, sample: float, stage: int, coefficient: float) -> float:
+        """
+        First-order all-pass filter
+        Phase shifts the signal without affecting amplitude
+        """
+        # y[n] = -x[n] + a * x[n-1] + a * y[n-1]
+        output = (
+            -sample + coefficient * self.ap_states[stage]
+        )  # All-pass filter difference equation
+        self.ap_states[stage] = sample + coefficient * output
+
+        return output
 
     def process(self, audio: np.ndarray) -> np.ndarray:
-        pass
+        if not self.enabled:
+            return audio
+
+        num_samples = len(audio)
+        output = np.zeros(num_samples, dtype=np.float32)
+
+        # LFO increments
+        lfo_inc = 2.0 * np.pi * self.rate / self.sample_rate
+
+        # Frequency range for the phaser sweep
+        min_freq = 200.0  # Hz
+        max_freq = 2000.0  # Hz
+
+        for i in range(num_samples):
+            # Generate LFO value (0 to 1)
+            lfo = (np.sin(self.lfo_phase) + 1.0) * 0.5
+
+            # Sweep frequency based on LFO
+            sweep_freq = min_freq + (max_freq - min_freq) * lfo * self.depth
+
+            # Convert freq to all-pass coefficient
+            # Map frequency to filter coefficient
+            omega = 2.0 * np.pi * sweep_freq / self.sample_rate
+            tan_omega = np.tan(omega / 2.0)
+            coefficient = (1.0 - tan_omega) / (1.0 + tan_omega)
+
+            # Clamp coefficient to stable range
+            coefficient = np.clip(coefficient, -0.99, 0.99)
+
+            # Input sample with feedback
+            input_sample = audio[i] + self.feedback_sample * self.feedback
+
+            # Process through cascaded all-pass filters
+            filtered = input_sample
+            for stage in range(self.num_stages):
+                filtered = self._all_pass_filter(filtered, stage, coefficient)
+
+            # Store for feedback
+            self.feedback_sample = filtered
+
+            # Mix dry and wet signals
+            # Adding the phase-shifted signal creates the notches
+            wet = (audio[i] + filtered) * 0.5
+            output[i] = audio[i] * (1.0 - self.mix) + wet * self.mix
+
+            # Advance LFO phase
+            self.lfo_phase += lfo_inc
+            if self.lfo_phase >= 2.0 * np.pi:
+                self.lfo_phase -= 2.0 * np.pi
+
+        return output
 
     def reset(self):
-        pass
+        self.ap_states = [0.0] * self.num_stages
+        self.lfo_phase = 0.0
+        self.feedback_sample = 0.0
