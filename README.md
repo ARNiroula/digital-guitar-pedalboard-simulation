@@ -6,12 +6,12 @@ A barebone simulation of Digital Pedal Board. The raw input comes from either:
 - Synthetic string input using karplus-strong string synthesis
 
 ## Goals
-The input will then be sent through a chain of different types of popular audio effects such as delay, flanger, overdrive, etc. 
+The input will then be sent through a chain of different types of popular audio effects such as delay, flanger, overdrive, etc.
 Visualization of input/output and their spectrum graph will also be available.
 
 
 ## Milestones
-- [x] Real time audio input using raw audio and synthetic audio using karplus-strong algorithm 
+- [x] Real time audio input using raw audio and synthetic audio using karplus-strong algorithm
     - [x] The audio should run in different thread so that GUI won't be affected
 - [x] Basic Effects (distortion, compressor)
 - [x] Effect chain (combine multiple effects)
@@ -30,9 +30,10 @@ Visualization of input/output and their spectrum graph will also be available.
     - [x] Chorus
     - [x] Flanger
     - [x] Delay
-    - [ ] Reverb (there is multiple algorithm to test out for reverb as its super complex!)
-    - [ ] Phaser
+    - [x] Phaser
+    - [x] Tremolo
     - [ ] Wah
+    - [ ] Reverb (there is multiple algorithm to test out for reverb as its super complex!)
 - [ ] Drag and Drop effect pedals so that the user can modify the effect chain
 - [x] Settings to control the Input Source, Audio Devices, Audio Settings (sampling rate, buffer size)
 
